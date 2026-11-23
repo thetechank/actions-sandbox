@@ -1,0 +1,33 @@
+# signup-comment: the safe half that writes (github-actions/security-hardening.md §5). workflow_run runs
+# the default branch's file after signup-check finishes, with a token that may comment. It runs none of
+# the pull request's code: it downloads signup-check's artifact, checks that the number is a number,
+# and posts the preview as text. Pushed on lab/default while it is the default branch.
+name: signup-comment
+on:
+  workflow_run:
+    workflows: [signup-check]
+    types: [completed]
+permissions: {}
+jobs:
+  comment:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      pull-requests: write
+    steps:
+      - name: Download the preview of the run that finished
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: preview
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - name: Comment the preview, as text
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pr=$(cat pr-number.txt)
+          case $pr in '' | *[!0-9]*) echo "::error::pr-number.txt is not a number"; exit 1 ;; esac
+          echo "signup-comment: commenting on PR #$pr"
+          gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$pr/comments" -F body=@preview.txt --jq '"comment: \(.id)"'
