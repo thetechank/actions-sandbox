@@ -1,0 +1,32 @@
+# preview, VULNERABLE: pull_request_target running the pull request's code
+# (github-actions/security-hardening.md §5). pull_request_target runs the workflow file of the default
+# branch, with the repository's secrets and a token that can write, even for a pull request from a
+# fork. This one then checks out the pull request's head and runs its volunteers/preview.sh with the
+# secret and the token in its environment: whoever opens the pull request decides what that script
+# does. Pushed on lab/default while it is the default branch. The safe split is ../signup-check.yml
+# (pull_request: the code, no secrets) plus ../signup-comment.yml (workflow_run: the comment, no code).
+name: preview
+on:
+  pull_request_target:
+    types: [opened]
+permissions:
+  pull-requests: write
+jobs:
+  preview:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Say what this run is
+        run: |
+          echo "preview: event=$GITHUB_EVENT_NAME ref=$GITHUB_REF sha=$GITHUB_SHA"
+      - name: Check out the pull request's head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Preview the rota
+        env:
+          SIGNUP_KEY: ${{ secrets.LAB_FAKE_SIGNUP_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: ./volunteers/preview.sh
