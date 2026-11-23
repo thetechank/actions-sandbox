@@ -1,0 +1,18 @@
+# greet-fixed: greet with the title passed through env (github-actions/security-hardening.md §4). The
+# runner puts the title in the environment variable TITLE; the script reads "$TITLE", which bash
+# expands as data, never as code, whatever the title holds.
+name: greet-fixed
+on:
+  pull_request:
+    types: [opened]
+permissions: {}
+jobs:
+  greet:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Greet the new volunteer
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "New sign-up: $TITLE"

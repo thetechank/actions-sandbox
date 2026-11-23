@@ -1,0 +1,35 @@
+# comment: the sign-up bot thanks the volunteer with a comment on the pull request
+# (github-actions/security-hardening.md §3). The same step in two jobs: without holds a token with no
+# permission (permissions: {} for the whole workflow), with is granted pull-requests: write. The
+# comment goes through the REST endpoint POST /repos/OWNER/REPO/issues/NUMBER/comments (a pull
+# request is an issue too).
+name: comment
+on:
+  pull_request:
+    types: [opened]
+permissions: {}
+jobs:
+  without:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Thank the volunteer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$PR/comments" \
+            -f body="Thanks for signing up! (job without)" --jq '"comment: \(.id)"'
+  with:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Thank the volunteer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$PR/comments" \
+            -f body="Thanks for signing up! (job with)" --jq '"comment: \(.id)"'
