@@ -1,0 +1,46 @@
+# check: the harness lab's CI (github-actions/github-actions-capstone.md §5), rebuilt from the single job
+# harness/build-headless-mode.md §8 wrote. Every run is ./check, offline: the fake model and recorded
+# responses, no API key, so a run costs no API money.
+#   when     a push to main; a pull request (opened, synchronize, reopened: one run per push to its
+#            branch, not a push run as well); by hand (gh workflow run check.yml), optionally with the
+#            self-hosted runner too
+#   at once  one run per pull request or branch: a newer push to a pull request cancels the older run;
+#            on main, runs queue (each commit of main gets its result)
+#   1 hosted       harness-check.yml on ubuntu-24.04 and ubuntu-24.04-arm (x64 and arm64, free for public
+#                  repositories; a private one spends the account's included minutes)
+#   1 self-hosted  harness-check.yml on a runner labelled actions-lab (the lab's VM, github-actions/
+#                  configuring-runners.md), only when dispatched with self-hosted: true
+# No permissions by default; each call grants contents: read, the most its jobs then have.
+name: check
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      self-hosted:
+        description: Also run ./check on the self-hosted runner labelled actions-lab
+        type: boolean
+        default: false
+permissions: {}
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  hosted:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/harness-check.yml # zizmor: ignore[self-repository] actionlint 1.7.12 refuses $/
+    with:
+      runs-on: '"${{ matrix.runner }}"'
+  self-hosted:
+    if: ${{ inputs.self-hosted }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/harness-check.yml # zizmor: ignore[self-repository] actionlint 1.7.12 refuses $/
+    with:
+      runs-on: '["self-hosted", "actions-lab"]'
