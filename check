@@ -1,0 +1,26 @@
+#!/usr/bin/env zsh
+# check: run every probe of the stand-in, as the harness lab's ./check does. Prints one FAIL line per
+# failed probe and ends with "check: ok (N checks)" or "check: N failed".
+#   ./check   the probes under uv (--frozen: uv.lock as it is); the docker ones need Docker running
+#             (without it: "FAIL docker not running", and every other probe still runs)
+emulate -L zsh
+cd "${0:A:h}" || exit 1
+
+failed=0
+select=()
+if ! docker info >/dev/null 2>&1; then
+  print -r -- "FAIL docker not running"; (( failed++ ))
+  select=(-m 'not docker')
+fi
+
+out=$(uv run --frozen pytest -q -rfs -p no:cacheprovider $select 2>&1)
+rc=$?
+for line in ${(f)out}; do
+  [[ $line == FAILED\ * ]] && { print -r -- "FAIL ${line#FAILED }"; (( failed++ )) }
+done
+(( rc != 0 && failed == 0 )) && { print -r -- $out; failed=1 }
+total=0
+[[ $out =~ '([0-9]+) passed' ]] && total=$match[1]
+
+if (( failed == 0 )); then print -r -- "check: ok ($total checks)"; else print -r -- "check: $failed failed"; fi
+(( failed == 0 ))
