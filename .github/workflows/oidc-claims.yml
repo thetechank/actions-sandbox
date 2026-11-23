@@ -1,0 +1,80 @@
+# oidc-claims: the Parcelpoint locker network's deploy job asks GitHub for an OIDC token, the way it
+# would before assuming a cloud role (github-actions/oidc.md). The audience is one no cloud trusts, so
+# the token is useless to anyone who finds it; it is never printed, only its claims (the payload, which
+# carries no signature). Pushed as .github/workflows/oidc-claims.yml.
+#   claims         every run: a token from the runner's token service with curl
+#                  (ACTIONS_ID_TOKEN_REQUEST_URL), its claims in the log; on the push to lab/10-claims
+#                  the token itself goes to the Mac as the 1-day artifact oidc-token
+#   deploy         push to lab/10-claims only: the same, from a job that names the environment
+#                  lab-parcel-lockers, with core.getIDToken (actions/github-script): sub names it
+#   no-permission  push to lab/10-claims only: core.getIDToken without id-token: write, which fails
+# Branches: lab/10-claims (the step), lab/10-custom (the customised sub), lab/10-practice (exercise
+# 10.1); tags lockers-*; pull requests into lab/10-claims.
+name: oidc-claims
+on:
+  push:
+    branches: [lab/10-claims, lab/10-custom, lab/10-practice]
+    tags: [lockers-*]
+  pull_request:
+    branches: [lab/10-claims]
+permissions: {}
+env:
+  AUDIENCE: actions-lab-no-cloud-trusts-this
+jobs:
+  claims:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      id-token: write
+    steps:
+      - name: Request an OIDC token
+        run: |
+          # The URL already carries a query string (?api-version=...): the audience is appended with &.
+          curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$AUDIENCE" | jq -r .value > "$RUNNER_TEMP/oidc.jwt"
+          echo "::add-mask::$(cat "$RUNNER_TEMP/oidc.jwt")"
+          echo "token: $(wc -c < "$RUNNER_TEMP/oidc.jwt") bytes, $(tr -cd . < "$RUNNER_TEMP/oidc.jwt" | wc -c) dots"
+      - name: Show the claims
+        run: |
+          # The payload is the second of the three dot-separated parts, base64url without padding.
+          payload=$(cut -d. -f2 "$RUNNER_TEMP/oidc.jwt" | tr '_-' '/+')
+          while [ $(( ${#payload} % 4 )) != 0 ]; do payload="$payload="; done
+          echo "$payload" | base64 -d | jq -S . | sed 's/^/claims: /'
+      - name: Hand the token to the Mac (1 day)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/lab/10-claims'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: oidc-token
+          path: ${{ runner.temp }}/oidc.jwt
+          retention-days: 1
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/lab/10-claims'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: lab-parcel-lockers
+    permissions:
+      id-token: write
+    steps:
+      - name: Request an OIDC token for the deploy
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const token = await core.getIDToken(process.env.AUDIENCE);
+            const claims = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString());
+            core.info(`deploy: sub=${claims.sub}`);
+            core.info(`deploy: environment=${claims.environment}`);
+            core.info('deploy: would now ask the cloud for the role parcel-lockers-deploy with this token');
+  no-permission:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/lab/10-claims'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - name: Request an OIDC token without id-token write
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            core.info(`ACTIONS_ID_TOKEN_REQUEST_URL is ${process.env.ACTIONS_ID_TOKEN_REQUEST_URL ? 'set' : 'not set'}`);
+            await core.getIDToken(process.env.AUDIENCE);
