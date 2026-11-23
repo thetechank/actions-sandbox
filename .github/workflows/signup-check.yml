@@ -1,0 +1,34 @@
+# signup-check: the safe half that runs the pull request's code (github-actions/security-hardening.md
+# §5). pull_request, not pull_request_target: for a fork it gets no secrets and a read-only token, so
+# running the pull request's preview.sh can reach nothing. It saves the preview and the pull
+# request's number as the artifact preview; signup-comment.yml (workflow_run) comments them. Pushed on
+# lab/09-signup, the pull request's head.
+name: signup-check
+on:
+  pull_request:
+    types: [opened]
+permissions: {}
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Preview the rota (the pull request's code, no secret, no token)
+        env:
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          mkdir -p preview
+          ./volunteers/preview.sh | tee preview/preview.txt
+          echo "$PR" > preview/pr-number.txt
+      - name: Keep the preview for the comment
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: preview
+          path: preview/
+          retention-days: 1

@@ -1,0 +1,18 @@
+# greet, VULNERABLE: script injection (github-actions/security-hardening.md §4). The Spoke & Sprocket
+# repair café's sign-up bot greets each pull request that signs a volunteer up for a shift, by its
+# title. The title is written into the script before bash reads it, so a title that closes the quotes
+# runs as commands. The fixed version is ../greet-fixed.yml. Pushed on lab/09-signup, the pull
+# request's head; runs on the pull request's opening.
+name: greet
+on:
+  pull_request:
+    types: [opened]
+permissions: {}
+jobs:
+  greet:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Greet the new volunteer
+        run: |
+          echo "New sign-up: ${{ github.event.pull_request.title }}"
