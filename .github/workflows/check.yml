@@ -1,0 +1,25 @@
+# Every push runs ./check: the probes on the fake model and recorded responses, offline.
+# No API key is set here, so a run costs no API money.
+name: check
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Install zsh (./check is a zsh script)
+        run: sudo apt-get update -q && sudo apt-get install -y -q zsh
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+      - name: Install the project
+        run: uv sync --frozen
+      - name: Pull the Docker sandbox's image
+        run: docker pull python:3.13-slim
+      - name: Run ./check
+        run: ./check
