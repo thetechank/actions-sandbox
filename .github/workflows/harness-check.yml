@@ -1,0 +1,149 @@
+# harness-check: one run of the harness lab's ./check on one runner, as a reusable workflow
+# (github-actions/github-actions-capstone.md §5). check.yml calls it once per runner; it has no trigger
+# of its own. The harness lab's ./check is a zsh script that runs the probes under uv, offline (the fake
+# model and recorded responses, no API key), and its Docker sandbox probes need python:3.13-slim.
+#   input runs-on  where the job runs, as JSON, as runs-on takes it (github-actions/configuring-runners.md
+#                  §11): '"ubuntu-24.04"', '"ubuntu-24.04-arm"' or '["self-hosted", "actions-lab"]'
+#   1 checkout     without keeping the token (nothing here pushes)
+#   2 zsh          only when the runner has none (the hosted images don't; a self-hosted runner brings
+#                  its own): its two .deb files, cached per image (ImageOS, such as ubuntu24-arm64; not
+#                  ImageVersion, which differs between runners of one label), installed with dpkg
+#   3 uv           setup-uv with its cache, keyed on uv.lock; then uv sync --frozen
+#   4 the image    its digest from a HEAD request to Docker Hub (no pull, not counted against Docker Hub's
+#                  rate limit); a cache of `docker save`'s tarball keyed on that digest and the runner's
+#                  architecture: a hit is docker load; a miss saves the runner's own copy when it has that
+#                  digest (a self-hosted runner), or pulls it by digest and saves it
+#   5 ./check      with a timeout of its own; its last line goes to the step summary with the cache hits
+# Hardened as github-actions/security-hardening.md §9 does: no permissions but contents: read, actions
+# pinned by commit SHA, values reach scripts through env, never ${{ }} inside run:.
+name: harness-check
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        description: Where the job runs, as JSON (a label string or a list of labels)
+        type: string
+        default: '"ubuntu-24.04"'
+permissions: {}
+jobs:
+  check:
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    env:
+      IMAGE: python:3.13-slim
+      IMAGE_REPO: library/python
+      IMAGE_TAG: 3.13-slim
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Does the runner have zsh? (./check is a zsh script)
+        id: zsh
+        run: |
+          if command -v zsh > /dev/null; then
+            echo "zsh: $(zsh --version), the runner's own"
+            echo "need=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "zsh: none; the image is ${ImageOS:-unknown} ${ImageVersion:-unknown}"
+            echo "need=true" >> "$GITHUB_OUTPUT"
+            echo "image=${ImageOS:-unknown}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Restore zsh's packages
+        id: zsh-cache
+        if: ${{ steps.zsh.outputs.need == 'true' }}
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/zsh-debs
+          key: zsh-${{ runner.arch }}-${{ steps.zsh.outputs.image }}
+      - name: Install zsh from its packages
+        if: ${{ steps.zsh.outputs.need == 'true' }}
+        timeout-minutes: 3
+        env:
+          HIT: ${{ steps.zsh-cache.outputs.cache-hit }}
+          DEBS: ${{ runner.temp }}/zsh-debs
+        run: |
+          if [ "$HIT" != true ]; then
+            # From the image's package lists; an image without them (act's) needs apt-get update first.
+            mkdir -p "$DEBS" && cd "$DEBS"
+            apt-get download -q zsh zsh-common > /dev/null 2>&1 ||
+              { sudo apt-get update -q > /dev/null && apt-get download -q zsh zsh-common > /dev/null; }
+            cd - > /dev/null
+          fi
+          # dpkg, not apt-get: no package lists read, no man-db trigger run (the slow part on a runner).
+          sudo dpkg -i --no-triggers "$DEBS"/*.deb > /dev/null
+          echo "zsh: installed $(zsh --version) from $(cd "$DEBS" && echo *.deb) (cache hit: ${HIT:-false})"
+      - name: Install uv, with its cache
+        id: uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install the project
+        timeout-minutes: 5
+        run: uv sync --frozen
+      - name: Find the image's digest
+        id: image
+        timeout-minutes: 2
+        run: |
+          # A HEAD request for the tag's manifest: Docker Hub answers with the digest in a header and
+          # doesn't count a HEAD against its pull rate limit (a docker pull or a GET of a manifest does).
+          token=$(curl -fsS "https://auth.docker.io/token?service=registry.docker.io&scope=repository:$IMAGE_REPO:pull" | jq -r .token)
+          digest=$(curl -fsSI -H "Authorization: Bearer $token" \
+            -H 'Accept: application/vnd.oci.image.index.v1+json' \
+            -H 'Accept: application/vnd.docker.distribution.manifest.list.v2+json' \
+            "https://registry-1.docker.io/v2/$IMAGE_REPO/manifests/$IMAGE_TAG" |
+            tr -d '\r' | awk 'tolower($1) == "docker-content-digest:" {print $2}')
+          [ -n "$digest" ] || { echo "::error::no digest for $IMAGE from Docker Hub"; exit 1; }
+          echo "image: $IMAGE is $digest"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - name: Restore the image's tarball
+        id: image-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/image.tar
+          key: image-python-3.13-slim-${{ runner.os }}-${{ runner.arch }}-${{ steps.image.outputs.digest }}
+      - name: Load the image, or pull and save it
+        timeout-minutes: 5
+        env:
+          HIT: ${{ steps.image-cache.outputs.cache-hit }}
+          TAR: ${{ runner.temp }}/image.tar
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          if [ "$HIT" = true ]; then
+            docker load -q -i "$TAR"
+            echo "image: loaded from the cache"
+          elif docker image inspect "$IMAGE" --format '{{join .RepoDigests " "}}' 2> /dev/null | grep -q "$DIGEST"; then
+            # A self-hosted runner's Docker keeps images between jobs: no pull needed.
+            docker save -o "$TAR" "$IMAGE"
+            echo "image: already in this runner's Docker, saved $(du -m "$TAR" | cut -f1) MB for the cache"
+          else
+            # By digest, so the tarball is the image the key names even if the tag moves meanwhile.
+            docker pull -q "${IMAGE%%:*}@$DIGEST" > /dev/null
+            docker tag "${IMAGE%%:*}@$DIGEST" "$IMAGE"
+            docker save -o "$TAR" "$IMAGE"
+            echo "image: pulled, saved $(du -m "$TAR" | cut -f1) MB for the cache"
+          fi
+      - name: Run ./check
+        timeout-minutes: 10
+        run: ./check | tee "$RUNNER_TEMP/check.txt"
+      - name: Write the step summary
+        if: ${{ !cancelled() }}
+        env:
+          UV_HIT: ${{ steps.uv.outputs.cache-hit }}
+          IMAGE_HIT: ${{ steps.image-cache.outputs.cache-hit }}
+        run: |
+          {
+            echo "### ./check on $RUNNER_NAME ($RUNNER_OS $RUNNER_ARCH)"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| result | \`$(tail -1 "$RUNNER_TEMP/check.txt" 2> /dev/null || echo 'did not run')\` |"
+            echo "| uv cache hit | ${UV_HIT:-false} |"
+            echo "| image cache hit | ${IMAGE_HIT:-false} |"
+          } >> "$GITHUB_STEP_SUMMARY"

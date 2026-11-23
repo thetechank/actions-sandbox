@@ -1,0 +1,28 @@
+# harness-shape: a stand-in with the harness lab's shape (github-actions/github-actions-capstone.md §3),
+# so the capstone's CI runs on the public sandbox without copying the private harness lab there. Same
+# layout as ~/techspace/wiki-labs/harness: a uv project (uv_build, Python 3.13, uv.lock), a zsh ./check
+# that runs pytest under uv, and probes that run a command in a python:3.13-slim container.
+[project]
+name = "shape"
+version = "0.1.0"
+description = "A harness-shaped stand-in: one command in a Docker sandbox"
+requires-python = ">=3.13"
+dependencies = []
+
+[project.scripts]
+shape = "shape:main"
+
+[build-system]
+requires = ["uv_build>=0.13.7,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "docker: needs a running Docker daemon (./check leaves them out when it is not running)",
+]
