@@ -1,0 +1,15 @@
+# pr: runs for a pull request when it is opened, reopened or labelled, not for new pushes to it
+# (github-actions/triggers.md §4). Pushed as .github/workflows/pr.yml to lab/02-pr.
+name: pr
+on:
+  pull_request:
+    types: [opened, reopened, labeled]
+jobs:
+  check-programme:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Say which commit this is
+        run: |
+          echo "choir: event=$GITHUB_EVENT_NAME action=${{ github.event.action }} ref=$GITHUB_REF sha=$GITHUB_SHA"
+          echo "choir: head_ref=$GITHUB_HEAD_REF base_ref=$GITHUB_BASE_REF"
+          echo "choir: head=${{ github.event.pull_request.head.sha }} base=${{ github.event.pull_request.base.sha }}"

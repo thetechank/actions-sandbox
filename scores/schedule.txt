@@ -1,0 +1,5 @@
+choir: Thu 26 Nov 19:30  soprano  Ave verum corpus (Mozart)       bars 1-24  St Anne's hall
+choir: Thu 26 Nov 20:15  alto     Ave verum corpus (Mozart)       bars 1-24  St Anne's hall
+choir: Sat 28 Nov 10:00  tenor    In the Bleak Midwinter (Holst)  bars 1-32  library annexe
+choir: Sat 28 Nov 10:45  bass     In the Bleak Midwinter (Holst)  bars 1-32  library annexe
+choir: Thu 03 Dec 19:30  full     both pieces, run-through        bars all   St Anne's hall

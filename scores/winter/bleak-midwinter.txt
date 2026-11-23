@@ -1,0 +1,4 @@
+title: In the Bleak Midwinter
+composer: Gustav Holst (arr. for SATB)
+key: F major   time: 4/4   bars: 32
+parts: soprano alto tenor bass
