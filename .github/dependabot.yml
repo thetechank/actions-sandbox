@@ -1,0 +1,21 @@
+# Dependabot's configuration for the sandbox (github-actions/security-hardening.md §7). Dependabot
+# reads it only from the default branch: the lab puts it on lab/default while that branch is the
+# default, never on main.
+#   github-actions   the uses: lines of the workflows (directory /, which means .github/workflows) and
+#                    of the composite actions under .github/actions/; a pull request per outdated
+#                    action, its SHA and its version comment both updated
+#   cooldown         a release must be 14 days old before Dependabot proposes it (the lab's own rule
+#                    for pins, and zizmor's dependabot-cooldown audit wants at least 7)
+#   labels: []       no labels: Dependabot would otherwise create the labels dependencies and
+#                    github_actions in the repository, which nothing would remove again
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directories:
+      - /
+      - /.github/actions/*
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    labels: []
