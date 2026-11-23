@@ -1,0 +1,37 @@
+# pr-merge: which code a pull_request run tests (github-actions/git-inside-ci.md §6). Pushed to both
+# lab/04-pr-base and lab/04-pr; the step script opens a pull request from lab/04-pr into lab/04-pr-base.
+# The run checks out refs/pull/N/merge: a merge commit GitHub made, which is on neither branch.
+name: pr-merge
+on:
+  pull_request:
+    branches: ['lab/**']
+jobs:
+  which-code:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out the merge commit and its two parents
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+      - name: Which commit is this
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          echo "pr: GITHUB_REF=$GITHUB_REF"
+          echo "pr: GITHUB_SHA=$GITHUB_SHA"
+          echo "pr: HEAD=$(git rev-parse HEAD), $(git status | head -1)"
+          echo "pr: HEAD^1=$(git rev-parse HEAD^1) base.sha=$PR_BASE_SHA"
+          echo "pr: HEAD^2=$(git rev-parse HEAD^2) head.sha=$PR_HEAD_SHA"
+          echo "pr: recipes=$(ls recipes |        run: |
+          echo "pr head: HEAD=$(git rev-parse HEAD) recipes=$(ls recipes | xargs)"
+      - name: Check out the pull request's head instead
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: head
+      - name: What the head has
+        working-directory: head
+        run: |
+          echo "pr head: HEAD=$(git rev-parse HEAD) recipes=$(ls recipes | xargs)"
