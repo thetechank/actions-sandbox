@@ -1,6 +1,6 @@
 [project]
 name = "tidetable"
-version = "0.1.0"
+version = "0.2.0rc1"
 description = "The next high and low tides for a few invented harbours, from a harmonic table"
 requires-python = ">=3.12"
 dependencies = []
