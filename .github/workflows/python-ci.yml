@@ -1,0 +1,162 @@
+# python-ci: one uv Python app's CI, as a reusable workflow (github-actions/reusable-workflows-and-
+# composite-actions.md §4; exercise 7.2). It has no trigger of its own: ci.yml calls it once per app
+# (app/ tidetable, app2/ birdtally), and demos/07/remote.yml calls it from another branch at a tag.
+#   1 lint     ruff, after a git describe of the build (the whole history, as in note 4)
+#   1 build    the wheel, uploaded as the artifact APP-wheel (the caller's run holds the artifacts of
+#              every call, so each call needs its own name); its file name and hash are job outputs
+#   2 pytest   (needs both) a matrix of the Pythons asked for: downloads the wheel, checks its hash,
+#              installs it, tests it, runs the smoke command; the JS action actions/test-summary
+#              (note 8, github-actions/writing-your-own-actions.md §7) writes both to the step summary
+# Every job starts with the composite action setup-tidetable (./ is the caller's checkout) and runs
+# its run: steps in the app's folder (job-level defaults: the workflow-level ones may not read inputs).
+# Outputs: wheel and sha256, the build job's. Inputs: app, pythons (a JSON list), smoke.
+# Note 9 (github-actions/security-hardening.md §9): no permissions at the top, contents: read per job
+# (the caller's job grants the same, the most a callee can have); actions pinned by commit SHA; no
+# checkout keeps the token (persist-credentials: false): nothing here pushes.
+name: python-ci
+on:
+  workflow_call:
+    inputs:
+      app:
+        description: The app's folder, holding pyproject.toml and uv.lock
+        type: string
+        required: true
+      pythons:
+        description: The Python versions to test on, as a JSON list
+        type: string
+        default: '["3.14"]'
+      smoke:
+        description: The command the test jobs run with uv run after the tests, such as the app's CLI
+        type: string
+        required: true
+    outputs:
+      wheel:
+        description: The wheel's file name
+        value: ${{ jobs.build.outputs.wheel }}
+      sha256:
+        description: The wheel's SHA-256
+        value: ${{ jobs.build.outputs.sha256 }}
+permissions: {}
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ inputs.app }}
+    steps:
+      - name: Check out the repository with its history and tags
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Describe the build
+        run: |
+          echo "build: $(git describe --tags --always)"
+      - name: Set up the app
+        uses: ./.github/actions/setup-tidetable
+        with:
+          app: ${{ inputs.app }}
+      - name: Lint
+        run: uv run --no-sync ruff check
+      - name: Check the formatting
+        run: uv run --no-sync ruff format --check
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ inputs.app }}
+    outputs:
+      wheel: ${{ steps.wheel.outputs.file }}
+      sha256: ${{ steps.wheel.outputs.sha256 }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up the app
+        uses: ./.github/actions/setup-tidetable
+        with:
+          app: ${{ inputs.app }}
+      - name: Build the wheel
+        id: wheel
+        run: |
+          uv build --wheel --out-dir dist
+          file=$(cd dist && echo *.whl)
+          sha256=$(sha256sum "dist/$file" | cut -d' ' -f1)
+          echo "file=$file" >> "$GITHUB_OUTPUT"
+          echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
+          echo "build: $file sha256=$sha256"
+      - name: Upload the wheel
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.app }}-wheel
+          path: ${{ inputs.app }}/dist/*.whl
+          retention-days: 1
+          if-no-files-found: error
+  pytest:
+    needs: [lint, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ inputs.app }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ${{ fromJSON(inputs.pythons) }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up the app and Python ${{ matrix.python }}
+        id: setup
+        uses: ./.github/actions/setup-tidetable
+        with:
+          app: ${{ inputs.app }}
+          python-version: ${{ matrix.python }}
+          install-project: 'false'
+      - name: Show what the setup gave
+        env:
+          PYTHON_VERSION: ${{ steps.setup.outputs.python-version }}
+          CACHE_HIT: ${{ steps.setup.outputs.cache-hit }}
+        run: |
+          echo "setup: python=$PYTHON_VERSION cache-hit=$CACHE_HIT"
+      - name: Download the wheel
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.app }}-wheel
+          path: ${{ inputs.app }}/dist
+      - name: Install the wheel
+        env:
+          WHEEL: ${{ needs.build.outputs.wheel }}
+          WANT: ${{ needs.build.outputs.sha256 }}
+        run: |
+          have=$(sha256sum "dist/$WHEEL" | cut -d' ' -f1)
+          echo "wheel: $WHEEL sha256=$have"
+          [ "$have" = "$WANT" ] || { echo "::error::the downloaded wheel is not the one the build job made"; exit 1; }
+          uv pip install "dist/$WHEEL"
+      - name: Test the installed wheel
+        run: uv run --no-sync pytest -q | tee pytest.txt
+      - name: Run the smoke command
+        env:
+          SMOKE: ${{ inputs.smoke }}
+        run: eval "uv run --no-sync $SMOKE" | tee smoke.txt
+      - name: Summarise the tests
+        if: ${{ !cancelled() }}
+        uses: ./actions/test-summary
+        with:
+          title: ${{ inputs.smoke }} (Python ${{ matrix.python }})
+          pytest-output: ${{ inputs.app }}/pytest.txt
+          smoke-output: ${{ inputs.app }}/smoke.txt

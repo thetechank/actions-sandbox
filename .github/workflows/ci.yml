@@ -1,0 +1,52 @@
+# ci: the sandbox's CI (github-actions/jobs-expressions-and-contexts.md §8 first, refactored since).
+#   1 test (a matrix over the apps: app tidetable, app2 birdtally)  calls the reusable workflow
+#                python-ci.yml once per app; its jobs show as "test (app) / lint", "test (app) / pytest
+#                (3.12)" and so on
+#   2 required (needs test, always runs)  prints the calls' result and the wheel output, fails unless
+#                every call succeeded: the one check the ruleset lab-protect requires (note 11)
+# Note 4 (github-actions/git-inside-ci.md §8): only lint fetches the whole history.
+# Note 5 (github-actions/variables-secrets-and-outputs.md §10): values in env, a step summary per test job.
+# Note 6 (github-actions/caching-and-artifacts.md §10): uv's cache; build the wheel once, test what ships.
+# Note 7 (github-actions/reusable-workflows-and-composite-actions.md §6): the setup steps four jobs
+# repeated are the composite action .github/actions/setup-tidetable; lint, build and test are the
+# reusable workflow .github/workflows/python-ci.yml, called here for both apps. The macOS and Windows
+# test jobs of notes 3 to 6 are gone (the track runs them only in notes 3 and 13).
+# Note 9 (github-actions/security-hardening.md §9): no permissions by default; test grants the callee
+# contents: read (a called workflow can never hold more than its caller job); report reads its values
+# from env, not ${{ }} in the script.
+# Note 11 (github-actions/environments-and-gates.md §3): report is now required, the check a ruleset
+# requires: one stable name, however the test jobs of the matrix are called. The stand-in deploy job
+# that demos/11/ci-before.yml tacks on here moved to publish.yml, with environments.
+name: ci
+on:
+  push:
+    paths-ignore:
+      - '**.md'
+permissions: {}
+jobs:
+  test:
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [app, app2]
+    uses: ./.github/workflows/python-ci.yml
+    with:
+      app: ${{ matrix.app }}
+      pythons: ${{ matrix.app == 'app' && '["3.12", "3.13", "3.14"]' || '["3.14"]' }}
+      smoke: ${{ matrix.app == 'app' && 'tidetable "Kestrel Bay" --from 2026-11-23T00:00Z' || 'birdtally sightings.csv' }}
+  required:
+    needs: test
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Report the calls' result
+        env:
+          RESULT: ${{ needs.test.result }}
+          WHEEL: ${{ needs.test.outputs.wheel }}
+        run: |
+          echo "required: test=$RESULT wheel=$WHEEL"
+          [ "$RESULT" = success ]

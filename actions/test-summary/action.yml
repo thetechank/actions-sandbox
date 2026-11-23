@@ -1,0 +1,33 @@
+# test-summary: the step summary python-ci.yml's test jobs used to write with an inline shell script
+# (github-actions/writing-your-own-actions.md §7), as a JavaScript action on @actions/core, built like
+# trail-report 1.1.0 (src/index.mjs bundled into dist/index.js by tools/build-actions).
+#   - uses: ./actions/test-summary
+#     if: ${{ !cancelled() }}
+#     with:
+#       title: tidetable on Python 3.13
+#       pytest-output: app/pytest.txt
+#       smoke-output: app/smoke.txt
+# It reads pytest's last line ("9 passed in 0.05s", "1 failed, 8 passed in 0.07s"), writes a heading,
+# that line and the smoke command's output to the step summary, and gives the counts as outputs.
+name: Test summary
+description: Write pytest's result and a smoke command's output to the step summary
+author: Actions Lab
+inputs:
+  title:
+    description: The summary's heading
+    required: true
+  pytest-output:
+    description: A file holding what pytest -q printed, relative to the workspace
+    required: true
+  smoke-output:
+    description: A file holding the smoke command's output, shown in a code block; empty for none
+    required: false
+    default: ''
+outputs:
+  passed:
+    description: How many tests passed
+  failed:
+    description: How many tests failed
+runs:
+  using: node24
+  main: dist/index.js

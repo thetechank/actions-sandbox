@@ -1,0 +1,22 @@
+[project]
+name = "birdtally"
+version = "0.1.0"
+description = "Totals per species from a winter bird count's sightings sheet"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+birdtally = "birdtally.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=9", "ruff>=0.14"]
+
+[build-system]
+requires = ["uv_build>=0.13,<0.14"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
