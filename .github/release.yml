@@ -1,0 +1,18 @@
+# release.yml (not a workflow): how GitHub groups the pull requests in a release's generated notes
+# (github-actions/releases.md §6). gh release create --generate-notes, the "Generate release notes"
+# button and POST /repos/OWNER/REPO/releases/generate-notes all read it. Each merged pull request goes
+# into the first category one of its labels matches; "*" matches every label and none.
+changelog:
+  exclude:
+    labels:
+      - ignore-for-release
+  categories:
+    - title: New harbours and features
+      labels:
+        - enhancement
+    - title: Fixes
+      labels:
+        - bug
+    - title: Other changes
+      labels:
+        - '*'

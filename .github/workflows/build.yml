@@ -1,0 +1,77 @@
+# build: build one uv app's wheel and sdist, once, as a reusable workflow (github-actions/releases.md
+# §4; exercise 12.1 calls it). It has no trigger of its own: python-ci.yml's build job calls it (so CI
+# tests exactly what this makes) and release.yml calls it (so a release ships exactly what CI builds).
+#   1 dist   uv build in APP: the wheel and the sdist into APP/dist, uploaded as the artifact APP-dist
+#            (one name per app: the caller's run holds the artifacts of every call); the file names
+#            and the wheel's SHA-256 are job outputs
+# Outputs: wheel, sdist (file names) and sha256 (the wheel's). Inputs: app, cache (default true).
+# Note 12 moved this job here from python-ci.yml, where it built the wheel only (note 6,
+# github-actions/caching-and-artifacts.md §10). Permissions as note 9 set them: contents: read, the
+# most a caller grants; no checkout keeps the token.
+name: build
+on:
+  workflow_call:
+    inputs:
+      app:
+        description: The app's folder, holding pyproject.toml and uv.lock
+        type: string
+        required: true
+      cache:
+        description: Restore and save uv's cache; release.yml turns it off (nothing a branch's run saved goes into a release)
+        type: boolean
+        default: true
+    outputs:
+      wheel:
+        description: The wheel's file name
+        value: ${{ jobs.dist.outputs.wheel }}
+      sdist:
+        description: The sdist's file name
+        value: ${{ jobs.dist.outputs.sdist }}
+      sha256:
+        description: The wheel's SHA-256
+        value: ${{ jobs.dist.outputs.sha256 }}
+permissions: {}
+jobs:
+  dist:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ inputs.app }}
+    outputs:
+      wheel: ${{ steps.dist.outputs.wheel }}
+      sdist: ${{ steps.dist.outputs.sdist }}
+      sha256: ${{ steps.dist.outputs.sha256 }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up the app
+        uses: ./.github/actions/setup-tidetable
+        with:
+          app: ${{ inputs.app }}
+          cache: ${{ inputs.cache }}
+      - name: Build the wheel and the sdist
+        id: dist
+        run: |
+          uv build --out-dir dist
+          wheel=$(cd dist && echo *.whl)
+          sdist=$(cd dist && echo *.tar.gz)
+          sha256=$(sha256sum "dist/$wheel" | cut -d' ' -f1)
+          {
+            echo "wheel=$wheel"
+            echo "sdist=$sdist"
+            echo "sha256=$sha256"
+          } >> "$GITHUB_OUTPUT"
+          echo "build: $wheel $sdist sha256=$sha256"
+      - name: Upload the wheel and the sdist
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.app }}-dist
+          path: ${{ inputs.app }}/dist/
+          retention-days: 1
+          if-no-files-found: error

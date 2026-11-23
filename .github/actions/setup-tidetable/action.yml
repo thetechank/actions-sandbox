@@ -1,0 +1,63 @@
+# setup-tidetable: the setup every Python job of the sandbox used to repeat, as one composite action
+# (github-actions/reusable-workflows-and-composite-actions.md §3; exercise 7.1). Named after the first
+# app it served; app2 (birdtally) uses it too. A job calls it as one step, after actions/checkout (the
+# runner reads this file from the checked-out workspace):
+#   - uses: ./.github/actions/setup-tidetable
+#     with:
+#       app: app
+#   1 Install uv      setup-uv with its cache on (unless cache is 'false'), keyed on APP/uv.lock, and the
+#                     Python asked for
+#   2 Sync            uv sync --locked in APP (without the project itself when install-project is false,
+#                     for a job that installs a built wheel instead); sets the output python-version
+# Outputs: python-version (the Python the environment uses), cache-hit (setup-uv restored uv's cache).
+name: Set up a uv app
+description: Install uv with its cache and an app's locked environment, ready for uv run --no-sync
+inputs:
+  app:
+    description: The app's folder, holding pyproject.toml and uv.lock
+    required: true
+  python-version:
+    description: The Python to install and use; empty leaves the choice to uv and the project
+    required: false
+    default: ''
+  install-project:
+    description: "'false' installs only the dependencies, for a job that installs a built wheel"
+    required: false
+    default: 'true'
+  cache:
+    description: "'false' leaves uv's cache off: a release build restores nothing another run saved (note 12)"
+    required: false
+    default: 'true'
+outputs:
+  python-version:
+    description: The Python version the environment uses, such as 3.13.9
+    value: ${{ steps.sync.outputs.python-version }}
+  cache-hit:
+    description: Whether setup-uv restored uv's cache ('true' or 'false')
+    value: ${{ steps.uv.outputs.cache-hit }}
+runs:
+  using: composite
+  steps:
+    - name: Install uv
+      id: uv
+      uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      with:
+        python-version: ${{ inputs.python-version }}
+        enable-cache: ${{ inputs.cache }}
+        cache-dependency-glob: ${{ inputs.app }}/uv.lock
+    - name: Sync the locked environment
+      id: sync
+      shell: bash
+      working-directory: ${{ inputs.app }}
+      env:
+        APP: ${{ inputs.app }}
+        INSTALL_PROJECT: ${{ inputs.install-project }}
+      run: |
+        if [ "$INSTALL_PROJECT" = false ]; then
+          uv sync --locked --no-install-project
+        else
+          uv sync --locked
+        fi
+        version=$(uv run --no-sync python -c 'import platform; print(platform.python_version())')
+        echo "python-version=$version" >> "$GITHUB_OUTPUT"
+        echo "setup-tidetable: app=$APP python=$version install-project=$INSTALL_PROJECT"

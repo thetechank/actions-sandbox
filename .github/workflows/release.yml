@@ -1,0 +1,100 @@
+# release: a pushed tag vX.Y.Z (or vX.Y.Z-rcN) becomes a GitHub release of tidetable, with the wheel
+# and the sdist attached and signed provenance for both (github-actions/releases.md §5; exercise 12.1).
+#   1 version  reads the version from the tag (GITHUB_REF_NAME) and from app/pyproject.toml and fails
+#              unless they are the same version; an -rcN tag is a pre-release
+#   2 build    (needs version) the reusable workflow build.yml, the one CI calls: the wheel and the
+#              sdist, built once, as the artifact app-dist; with uv's cache off, so nothing a branch's
+#              run saved in the cache ends up in a release
+#   3 publish  (needs both) downloads app-dist, checks the wheel is the one build made, attests both
+#              files (a Sigstore-signed SLSA provenance statement, stored with GitHub's attestations
+#              API), then gh release create: the tag's release, notes generated from the pull requests
+#              since the previous release (grouped by .github/release.yml), the two files as assets
+# No permissions at the top; each job gets only what it uses. Only publish can write: contents: write
+# to create the release, id-token: write for the OIDC token Sigstore's certificate is issued for
+# (note 10, github-actions/oidc.md), attestations: write to store the attestation.
+name: release
+on:
+  push:
+    tags:
+      - 'v*'
+permissions: {}
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      prerelease: ${{ steps.check.outputs.prerelease }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check the tag against pyproject.toml
+        id: check
+        run: |
+          tag=$GITHUB_REF_NAME
+          # v0.2.0-rc1 is the Python version 0.2.0rc1 (PEP 440 writes a pre-release without the dash).
+          want=${tag#v}
+          want=${want/-rc/rc}
+          have=$(python3 -c 'import tomllib; print(tomllib.load(open("app/pyproject.toml", "rb"))["project"]["version"])')
+          echo "version: tag=$tag wants $want, app/pyproject.toml has $have"
+          if [ "$have" != "$want" ]; then
+            echo "::error file=app/pyproject.toml::tag $tag wants version $want, but app/pyproject.toml says $have"
+            exit 1
+          fi
+          case $tag in *-rc*) prerelease=true ;; *) prerelease=false ;; esac
+          echo "version=$have" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          echo "version: $have prerelease=$prerelease"
+  build:
+    needs: version
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build.yml
+    with:
+      app: app
+      cache: false
+  publish:
+    needs: [version, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download the wheel and the sdist
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: app-dist
+          path: dist
+      - name: Check the wheel is the one build made
+        env:
+          WHEEL: ${{ needs.build.outputs.wheel }}
+          WANT: ${{ needs.build.outputs.sha256 }}
+        run: |
+          have=$(sha256sum "dist/$WHEEL" | cut -d' ' -f1)
+          echo "publish: $(cd dist && echo *)"
+          echo "publish: $WHEEL sha256=$have"
+          [ "$have" = "$WANT" ] || { echo "::error::the downloaded wheel is not the one the build job made"; exit 1; }
+      - name: Attest the build provenance
+        id: attest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.version.outputs.version }}
+          PRERELEASE: ${{ needs.version.outputs.prerelease }}
+          ATTESTATION: ${{ steps.attest.outputs.attestation-url }}
+        run: |
+          flags=()
+          [ "$PRERELEASE" = true ] && flags+=(--prerelease)
+          gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "tidetable $VERSION" --generate-notes "${flags[@]}"
+          echo "release: $TAG prerelease=$PRERELEASE attestation=$ATTESTATION"
